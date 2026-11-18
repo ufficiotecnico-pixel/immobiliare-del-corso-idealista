@@ -1,0 +1,41 @@
+
+name: Verifica FTP Idealista
+
+on:
+  workflow_dispatch:
+
+jobs:
+  verifica:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+
+    steps:
+      - name: Controlla connessione FTP
+        env:
+          FTP_HOST: ${{ secrets.IDEALISTA_FTP_HOST }}
+          FTP_USER: ${{ secrets.IDEALISTA_FTP_USER }}
+          FTP_PASSWORD: ${{ secrets.IDEALISTA_FTP_PASSWORD }}
+        run: |
+          python3 - <<'PY'
+          import os
+          from ftplib import FTP, error_perm
+
+          host = os.environ["FTP_HOST"]
+          user = os.environ["FTP_USER"]
+          password = os.environ["FTP_PASSWORD"]
+
+          try:
+              with FTP(timeout=20) as ftp:
+                  ftp.connect(host, 21)
+                  ftp.login(user, password)
+                  ftp.set_pasv(True)
+                  print("CONNESSIONE FTP RIUSCITA")
+                  print("Cartella:", ftp.pwd())
+                  print("File disponibili:")
+                  for nome in ftp.nlst()[:30]:
+                      print("-", nome)
+          except Exception as errore:
+              print("CONNESSIONE FTP NON RIUSCITA")
+              print("Tipo errore:", type(errore).__name__)
+              raise SystemExit(1)
+          PY
