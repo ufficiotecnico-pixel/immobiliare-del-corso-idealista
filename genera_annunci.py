@@ -49,7 +49,9 @@ def commento(annuncio):
             continue
 
         lingua = valore(item, "language").strip().lower()
+        testo = valore(item, "propertycomment")
         print("LINGUA XML:", repr(valore(item, "language")))
+        print("ANTEPRIMA TESTO:", repr(testo[:120]))
         lingua = lingua.replace("_", "-")
 
         if (
