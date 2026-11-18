@@ -1,4 +1,5 @@
 
+
 name: Verifica FTP Idealista
 
 on:
@@ -7,7 +8,7 @@ on:
 jobs:
   verifica:
     runs-on: ubuntu-latest
-    timeout-minutes: 3
+    timeout-minutes: 5
 
     steps:
       - name: Analizza campi immobili XML
@@ -22,29 +23,36 @@ jobs:
           from ftplib import FTP
           import xml.etree.ElementTree as ET
 
-          def tag(e):
-              return e.tag.split("}")[-1]
+          def tag(elemento):
+              return elemento.tag.split("}")[-1].lower()
 
-          def struttura(elemento, livello=0, massimo=3):
+          def struttura(elemento, livello=0, massimo=4):
               if livello > massimo:
                   return
-              figli = list(elemento)
+
               gruppi = {}
-              for figlio in figli:
+              for figlio in elemento:
                   nome = tag(figlio)
                   gruppi.setdefault(nome, []).append(figlio)
+
               for nome, elementi in gruppi.items():
                   print(
-                      "  " * livello + "- " + nome +
-                      " (" + str(len(elementi)) + ")"
+                      "  " * livello
+                      + "- " + nome
+                      + " (" + str(len(elementi)) + ")"
                   )
                   if livello < massimo:
                       struttura(
-                          elementi[0], livello + 1, massimo
+                          elementi[0],
+                          livello + 1,
+                          massimo
                       )
 
+          host = os.environ["FTP_HOST"]
+          host = host.replace("ftp://", "").replace("/", "")
+
           with FTP(timeout=30) as ftp:
-              ftp.connect(os.environ["FTP_HOST"], 21)
+              ftp.connect(host, 21)
               ftp.login(
                   os.environ["FTP_USER"],
                   os.environ["FTP_PASSWORD"]
@@ -52,43 +60,93 @@ jobs:
               ftp.set_pasv(True)
 
               nomi = ftp.nlst()
-              principali = [
-                  n for n in nomi
-                  if n.lower().endswith(".xml")
+
+              print("CONNESSIONE FTP RIUSCITA")
+              print("File trovati:", len(nomi))
+
+              candidati = [
+                  nome for nome in nomi
+                  if nome.lower().endswith(".xml")
                   and not any(
-                      n.lower().endswith("_" + s + ".xml")
+                      nome.lower().endswith("_" + s + ".xml")
                       for s in (
-                          "activities", "agents", "clients",
-                          "enquiries", "groups", "operations"
+                          "activities",
+                          "agents",
+                          "clients",
+                          "enquiries",
+                          "groups",
+                          "operations"
                       )
                   )
               ]
-              if len(principali) != 1:
+
+              print("XML candidati:", len(candidati))
+
+              if not candidati:
                   raise SystemExit(
-                      "Atteso un solo XML principale"
+                      "Nessun XML candidato trovato"
                   )
 
-              dati = io.BytesIO()
-              ftp.retrbinary(
-                  "RETR " + principali[0],
-                  dati.write
-              )
+              radice = None
+              annunci = []
+              selezionato = None
 
-          radice = ET.fromstring(dati.getvalue())
-          annunci = [
-              e for e in radice if tag(e) == "ad"
-          ]
+              for nome in candidati:
+                  print("Analizzo:", nome)
 
-          print("NUMERO ANNUNCI:", len(annunci))
+                  dati = io.BytesIO()
+
+                  try:
+                      ftp.retrbinary(
+                          "RETR " + nome,
+                          dati.write
+                      )
+                      xml = ET.fromstring(dati.getvalue())
+
+                      trovati = [
+                          e for e in xml.iter()
+                          if tag(e) == "ad"
+                      ]
+
+                      print(
+                          "Annunci trovati:",
+                          len(trovati)
+                      )
+
+                      if trovati:
+                          radice = xml
+                          annunci = trovati
+                          selezionato = nome
+                          break
+
+                  except ET.ParseError as errore:
+                      print("XML non valido:", errore)
+                  except Exception as errore:
+                      print(
+                          "Impossibile leggere il file:",
+                          type(errore).__name__
+                      )
 
           if not annunci:
-              raise SystemExit("Nessun annuncio trovato")
+              raise SystemExit(
+                  "Nessun annuncio trovato negli XML"
+              )
+
+          print("\nXML SELEZIONATO:", selezionato)
+          print("NUMERO ANNUNCI:", len(annunci))
 
           primo = annunci[0]
 
+          print("\nCAMPI PRINCIPALI:")
+          struttura(primo, massimo=1)
+
           for sezione in (
-              "property", "prices", "comments",
-              "multimedias", "scope", "services"
+              "property",
+              "prices",
+              "comments",
+              "multimedias",
+              "scope",
+              "services"
           ):
               elemento = next(
                   (
@@ -97,7 +155,9 @@ jobs:
                   ),
                   None
               )
+
               print("\nSEZIONE:", sezione)
+
               if elemento is None:
                   print("Non presente")
               else:
