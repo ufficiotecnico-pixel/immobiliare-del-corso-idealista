@@ -1,166 +1,65 @@
 
-name: Verifica FTP Idealista
+name: Sincronizzazione annunci Idealista
 
 on:
   workflow_dispatch:
+  schedule:
+    - cron: '17 */6 * * *'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: sincronizzazione-idealista
+  cancel-in-progress: false
 
 jobs:
-  verifica:
+  sincronizza:
     runs-on: ubuntu-latest
     timeout-minutes: 5
 
     steps:
-      - name: Analizza campi immobili XML
+      - name: Scarica repository
+        uses: actions/checkout@v4
+
+      - name: Genera JSON immobili
         env:
           FTP_HOST: ${{ secrets.IDEALISTA_FTP_HOST }}
           FTP_USER: ${{ secrets.IDEALISTA_FTP_USER }}
           FTP_PASSWORD: ${{ secrets.IDEALISTA_FTP_PASSWORD }}
+        run: python3 genera_annunci.py
+
+      - name: Verifica JSON
         run: |
           python3 - <<'PY'
-          import os
-          import io
-          from ftplib import FTP
-          import xml.etree.ElementTree as ET
+          import json
 
-          def tag(elemento):
-              return elemento.tag.split("}")[-1].lower()
+          with open("data/annunci.json", encoding="utf-8") as f:
+              annunci = json.load(f)
 
-          def struttura(elemento, livello=0, massimo=4):
-              if livello > massimo:
-                  return
+          if not isinstance(annunci, list) or not annunci:
+              raise SystemExit("ERRORE: JSON vuoto o non valido")
 
-              gruppi = {}
-              for figlio in elemento:
-                  nome = tag(figlio)
-                  gruppi.setdefault(nome, []).append(figlio)
-
-              for nome, elementi in gruppi.items():
-                  print(
-                      "  " * livello
-                      + "- " + nome
-                      + " (" + str(len(elementi)) + ")"
-                  )
-                  if livello < massimo:
-                      struttura(
-                          elementi[0],
-                          livello + 1,
-                          massimo
-                      )
-
-          host = os.environ["FTP_HOST"]
-          host = host.replace("ftp://", "").replace("/", "")
-
-          with FTP(timeout=30) as ftp:
-              ftp.connect(host, 21)
-              ftp.login(
-                  os.environ["FTP_USER"],
-                  os.environ["FTP_PASSWORD"]
+          print("JSON valido")
+          print("Immobili trovati:", len(annunci))
+          for immobile in annunci:
+              print(
+                  "ID:", immobile["id"],
+                  "| Località:", immobile["localita"],
+                  "| Prezzo:", immobile["prezzo"],
+                  "| Foto:", len(immobile["immagini"])
               )
-              ftp.set_pasv(True)
-
-              nomi = ftp.nlst()
-
-              print("CONNESSIONE FTP RIUSCITA")
-              print("File trovati:", len(nomi))
-
-              candidati = [
-                  nome for nome in nomi
-                  if nome.lower().endswith(".xml")
-                  and not any(
-                      nome.lower().endswith("_" + s + ".xml")
-                      for s in (
-                          "activities",
-                          "agents",
-                          "clients",
-                          "enquiries",
-                          "groups",
-                          "operations"
-                      )
-                  )
-              ]
-
-              print("XML candidati:", len(candidati))
-
-              if not candidati:
-                  raise SystemExit(
-                      "Nessun XML candidato trovato"
-                  )
-
-              radice = None
-              annunci = []
-              selezionato = None
-
-              for nome in candidati:
-                  print("Analizzo:", nome)
-
-                  dati = io.BytesIO()
-
-                  try:
-                      ftp.retrbinary(
-                          "RETR " + nome,
-                          dati.write
-                      )
-                      xml = ET.fromstring(dati.getvalue())
-
-                      trovati = [
-                          e for e in xml.iter()
-                          if tag(e) == "ad"
-                      ]
-
-                      print(
-                          "Annunci trovati:",
-                          len(trovati)
-                      )
-
-                      if trovati:
-                          radice = xml
-                          annunci = trovati
-                          selezionato = nome
-                          break
-
-                  except ET.ParseError as errore:
-                      print("XML non valido:", errore)
-                  except Exception as errore:
-                      print(
-                          "Impossibile leggere il file:",
-                          type(errore).__name__
-                      )
-
-          if not annunci:
-              raise SystemExit(
-                  "Nessun annuncio trovato negli XML"
-              )
-
-          print("\nXML SELEZIONATO:", selezionato)
-          print("NUMERO ANNUNCI:", len(annunci))
-
-          primo = annunci[0]
-
-          print("\nCAMPI PRINCIPALI:")
-          struttura(primo, massimo=1)
-
-          for sezione in (
-              "property",
-              "prices",
-              "comments",
-              "multimedias",
-              "scope",
-              "services"
-          ):
-              elemento = next(
-                  (
-                      e for e in primo
-                      if tag(e) == sezione
-                  ),
-                  None
-              )
-
-              print("\nSEZIONE:", sezione)
-
-              if elemento is None:
-                  print("Non presente")
-              else:
-                  struttura(elemento, massimo=4)
-
-          print("\nANALISI COMPLETATA")
           PY
+
+      - name: Salva annunci aggiornati
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/annunci.json
+
+          if git diff --cached --quiet; then
+            echo "Nessuna modifica agli annunci"
+          else
+            git commit -m "Aggiornamento automatico annunci Idealista"
+            git push
+          fi
