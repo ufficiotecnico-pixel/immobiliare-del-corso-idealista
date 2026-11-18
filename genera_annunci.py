@@ -38,6 +38,7 @@ def numero(testo):
 
 # DESCRIZIONI: SOLO LINGUA ITALIANA
 
+
 def commento(annuncio):
     sezione = figlio(annuncio, "comments")
 
@@ -49,22 +50,15 @@ def commento(annuncio):
             continue
 
         lingua = valore(item, "language").strip().lower()
-        testo = valore(item, "propertycomment")
-        print("LINGUA XML:", repr(valore(item, "language")))
-        print("ANTEPRIMA TESTO:", repr(testo[:120]))
-        lingua = lingua.replace("_", "-")
 
-        if (
-            lingua in ("it", "it-it", "italiano", "italian")
-            or lingua.startswith("it-")
-        ):
+        if lingua in ("5", "it", "it-it", "italiano", "italian"):
             testo = valore(item, "propertycomment")
 
             if testo:
                 return testo
 
-    # Non utilizzare descrizioni in lingue straniere.
     return ""
+
 
 
 # FOTOGRAFIE
