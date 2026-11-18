@@ -10,7 +10,7 @@ jobs:
     timeout-minutes: 3
 
     steps:
-      - name: Controlla struttura XML
+      - name: Analizza campi immobili XML
         env:
           FTP_HOST: ${{ secrets.IDEALISTA_FTP_HOST }}
           FTP_USER: ${{ secrets.IDEALISTA_FTP_USER }}
@@ -22,6 +22,27 @@ jobs:
           from ftplib import FTP
           import xml.etree.ElementTree as ET
 
+          def tag(e):
+              return e.tag.split("}")[-1]
+
+          def struttura(elemento, livello=0, massimo=3):
+              if livello > massimo:
+                  return
+              figli = list(elemento)
+              gruppi = {}
+              for figlio in figli:
+                  nome = tag(figlio)
+                  gruppi.setdefault(nome, []).append(figlio)
+              for nome, elementi in gruppi.items():
+                  print(
+                      "  " * livello + "- " + nome +
+                      " (" + str(len(elementi)) + ")"
+                  )
+                  if livello < massimo:
+                      struttura(
+                          elementi[0], livello + 1, massimo
+                      )
+
           with FTP(timeout=30) as ftp:
               ftp.connect(os.environ["FTP_HOST"], 21)
               ftp.login(
@@ -30,44 +51,57 @@ jobs:
               )
               ftp.set_pasv(True)
 
-              files = ftp.nlst()
-              main_files = [
-                  f for f in files
-                  if f.lower().endswith(".xml")
+              nomi = ftp.nlst()
+              principali = [
+                  n for n in nomi
+                  if n.lower().endswith(".xml")
                   and not any(
-                      f.lower().endswith("_" + s + ".xml")
-                      for s in [
+                      n.lower().endswith("_" + s + ".xml")
+                      for s in (
                           "activities", "agents", "clients",
                           "enquiries", "groups", "operations"
-                      ]
+                      )
                   )
               ]
+              if len(principali) != 1:
+                  raise SystemExit(
+                      "Atteso un solo XML principale"
+                  )
 
-              if not main_files:
-                  raise SystemExit("File XML principale non trovato")
+              dati = io.BytesIO()
+              ftp.retrbinary(
+                  "RETR " + principali[0],
+                  dati.write
+              )
 
-              name = main_files[0]
-              data = io.BytesIO()
-              ftp.retrbinary("RETR " + name, data.write)
+          radice = ET.fromstring(dati.getvalue())
+          annunci = [
+              e for e in radice if tag(e) == "ad"
+          ]
 
-          root = ET.fromstring(data.getvalue())
+          print("NUMERO ANNUNCI:", len(annunci))
 
-          def tag_name(tag):
-              return tag.split("}")[-1]
+          if not annunci:
+              raise SystemExit("Nessun annuncio trovato")
 
-          print("XML PRINCIPALE TROVATO")
-          print("Dimensione in byte:", len(data.getvalue()))
-          print("Elemento principale:", tag_name(root.tag))
-          print("Numero elementi diretti:", len(root))
-          print("Tipi di elementi diretti:")
-          print(sorted(set(tag_name(e.tag) for e in root)))
+          primo = annunci[0]
 
-          print("STRUTTURA PRIMI ELEMENTI:")
-          for child in list(root)[:3]:
-              print("Elemento:", tag_name(child.tag))
-              print("Campi:", [
-                  tag_name(e.tag) for e in list(child)[:25]
-              ])
+          for sezione in (
+              "property", "prices", "comments",
+              "multimedias", "scope", "services"
+          ):
+              elemento = next(
+                  (
+                      e for e in primo
+                      if tag(e) == sezione
+                  ),
+                  None
+              )
+              print("\nSEZIONE:", sezione)
+              if elemento is None:
+                  print("Non presente")
+              else:
+                  struttura(elemento, massimo=4)
 
-          print("VERIFICA COMPLETATA")
+          print("\nANALISI COMPLETATA")
           PY
